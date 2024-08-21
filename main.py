@@ -4,7 +4,6 @@ import os
 import platform
 import re
 import shutil
-import sqlite3
 import subprocess
 import sys
 import time
@@ -14,8 +13,8 @@ import chardet
 import rarfile
 import requests
 from lxml import etree
-from PyQt5.QtCore import Qt, QThread, QTimer, QUrl, pyqtSignal
-from PyQt5.QtGui import QDesktopServices, QIcon, QTextCursor
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtGui import QIcon, QTextCursor
 from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -26,7 +25,6 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLineEdit,
     QPushButton,
-    QStatusBar,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -106,6 +104,10 @@ class FlingTrainerApp(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowIcon(QIcon("./icon.jpg"))
+        self.home_dir = ""
+        self.config_path = ""
+        self.db_path = ""
+        self.initHome()
         self.initDB()
         self.checkAndInitializeDB()
         self.loadSettings()
@@ -114,7 +116,6 @@ class FlingTrainerApp(QWidget):
         self.searchData()
         self.logMessage("初始化中...")
         self.updateDB()
-        # QTimer.singleShot(100, self.initApp)  # 延迟初始化
 
     def initApp(self):
         self.worker = Worker(self.asyncInitApp)
@@ -128,6 +129,16 @@ class FlingTrainerApp(QWidget):
         # self.updateDB()
         # self.searchData()
         ...
+
+    def initHome(self):
+        user_home = os.path.expanduser("~")
+        app_home = os.path.join(user_home, ".flingcat")
+        if not os.path.exists(app_home):
+            os.makedirs(app_home)
+        print(app_home)
+        self.home_dir = app_home
+        self.config_path = os.path.join(app_home, "config.json")
+        self.db_path = f"sqlite:///{os.path.join(app_home,'flingtrainer_app.db')}"
 
     def initUI(self):
         self.setWindowTitle("Fling Trainer App")
@@ -188,12 +199,11 @@ class FlingTrainerApp(QWidget):
         self.logTextBox.ensureCursorVisible()
 
     def initDB(self):
-        self.engine = create_engine("sqlite:///flingtrainer_app.db")
+        self.engine = create_engine(self.db_path)
         self.Session = sessionmaker(bind=self.engine)
 
     def checkAndInitializeDB(self):
-        if not os.path.exists("flingtrainer_app.db"):
-            Base.metadata.create_all(self.engine)
+        Base.metadata.create_all(self.engine)
 
     def getlist(self):
         url = "https://flingtrainer.com/all-trainers-a-z/"
@@ -279,15 +289,15 @@ class FlingTrainerApp(QWidget):
         session.close()
 
     def loadSettings(self):
-        if os.path.exists("config.json"):
-            with open("config.json", "r") as f:
+        if os.path.exists(self.config_path):
+            with open(self.config_path, "r") as f:
                 self.settings = json.load(f)
         else:
             self.settings = {"download_path": ""}
         self.downloadPath = self.settings.get("download_path", "")
 
     def saveSettings(self):
-        with open("config.json", "w") as f:
+        with open(self.config_path, "w") as f:
             json.dump(self.settings, f)
 
     def searchData(self):
@@ -518,7 +528,7 @@ class FlingTrainerApp(QWidget):
                 app.save_path = trainer
                 app.update_date = app_info.get("date", "")
                 app.app_md5 = app_info.get("md5", "")
-                if readme != "":
+                if readme:
                     with open(readme, "rb") as f:
                         raw_data = f.read()
                         encoding = chardet.detect(raw_data)["encoding"]
