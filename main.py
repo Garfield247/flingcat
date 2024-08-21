@@ -441,6 +441,19 @@ class FlingTrainerApp(QWidget):
         if file_type == "zip":
             shutil.unpack_archive(temp_file_path, save_path)
         elif file_type == "rar":
+            if not os.path.exists(save_path):
+                os.makedirs(save_path)
+
+            # 构建 unrar 可执行文件的路径
+            unrar_path = os.path.join(".", "bin", "unrarw64.exe")
+            # 构建解压命令
+            command = [unrar_path, "x", "-y", temp_file_path, save_path]
+
+            try:
+                # 调用 unrar 命令
+                subprocess.run(command, check=True)
+            except subprocess.CalledProcessError as e:
+                print(f"解压失败: {e}")
             with rarfile.RarFile(temp_file_path) as rf:
                 rf.extractall(save_path)
         # os.remove(temp_path)
