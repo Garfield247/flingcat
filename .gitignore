@@ -3,3 +3,5 @@
 
 flingtrainer_app.db
 .python-version
+__pycache__
+bin/.DS_Store
