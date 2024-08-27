@@ -8,6 +8,7 @@ import stat
 import subprocess
 import sys
 import time
+from typing import NoReturn
 from urllib.request import urlretrieve
 
 import chardet
@@ -35,35 +36,19 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from sqlalchemy import Boolean, Column, Integer, String, create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 from consts import GAME_NAME_MAP
+from db import Base, FlingTrainerAppModel
 from utils import FlingCatTools
-
-Base = declarative_base()
-
-
-class FlingTrainerAppModel(Base):
-    __tablename__ = "flingtrainer_app"
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    name_zh = Column(String)
-    name_en = Column(String, unique=True)
-    page_url = Column(String)
-    download = Column(Boolean, default=False)
-    is_hot = Column(Boolean, default=False)
-    is_new = Column(Boolean, default=False)
-    save_path = Column(String)
-    readme = Column(String)
-    app_md5 = Column(String)
-    update_date = Column(String)
 
 
 class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("设置")
-        self.setGeometry(200, 200, 500, 400)  # 设置窗口宽度为500，高度为400
+        self.setGeometry(200, 200, 500, 200)  # 设置窗口宽度为500，高度为400
         self.initUI()
 
     def initUI(self):
@@ -81,11 +66,23 @@ class SettingsDialog(QDialog):
         browseButton.clicked.connect(self.selectDownloadPath)
         layout.addWidget(browseButton, 0, 2)  # 第三列
 
-        # 第二行
-        layout.addWidget(QLabel("作者:"), 1, 0)  # 第一列
-        authorLabel = QLabel("catman")  # 不可编辑的文本
-        layout.addWidget(authorLabel, 1, 1)  # 第二列
-        layout.addWidget(QLabel(""), 1, 2)  # 第三列空白
+        # 添加调试开关
+        self.debugSwitch = QCheckBox("调试模式", self)  # 新增调试开关
+        self.debugSwitch.setChecked(self.parent().debugMode)  # 默认为关闭
+        layout.addWidget(self.debugSwitch, 1, 0, 1, 3)  # 跨越三列
+
+        layout.addWidget(QLabel("作者:"), 3, 0)  # 第一列
+        authorLabel = QLabel(
+            "<a href='https://space.bilibili.com/66507754'>catman</a>"
+        )  # 不可编辑的文本
+        authorLabel.setOpenExternalLinks(True)
+        layout.addWidget(authorLabel, 3, 1)  # 第二列
+        layout.addWidget(QLabel(""), 3, 2)  # 第三列空白
+
+        layout.addWidget(QLabel("声明:"), 4, 0)  # 第一列
+        authorLabel = QLabel("随缘更新,完全免费,禁止倒卖")  # 不可编辑的文本
+        layout.addWidget(authorLabel, 4, 1)  # 第二列
+        layout.addWidget(QLabel(""), 4, 2)  # 第三列空白
 
         # 保存和取消按钮
         buttonBox = QDialogButtonBox(
@@ -100,10 +97,13 @@ class SettingsDialog(QDialog):
     def selectDownloadPath(self):
         path = QFileDialog.getExistingDirectory(self, "选择下载路径")
         if path:
-            self.downloadPathEdit.setText(path)
+            self.downloadPathEdit.setText(os.path.normpath(path))
 
     def getDownloadPath(self):
         return self.downloadPathEdit.text()
+
+    def getDebugSwitch(self):
+        return self.debugSwitch.isChecked()
 
 
 class Worker(QThread):
@@ -126,30 +126,22 @@ class FlingTrainerApp(QWidget):
         self.home_dir = ""
         self.config_path = ""
         self.db_path = ""
+        self.downloadPath = ""
+        self.debugMode = False
         self.initHome()
+        self.loadSettings()
         self.initDB()
         self.checkAndInitializeDB()
-        self.loadSettings()
         self.initUI()
         self.show()  # 先显示主窗口
         self.searchData()
         self.logMessage("初始化中...")
         self.updateDB()
 
-    def initApp(self):
-        self.worker = Worker(self.asyncInitApp)
-        self.worker.finished.connect(self.onInitAppFinished)
-        self.worker.start()
-
-    def onInitAppFinished(self):
-        self.logMessage("初始化完成")
-
-    def asyncInitApp(self):
-        # self.updateDB()
-        # self.searchData()
-        ...
-
-    def initHome(self):
+    def initHome(self) -> NoReturn:
+        """
+        初始化软件工作目录
+        """
         user_home = os.path.expanduser("~")
         app_home = os.path.join(user_home, "flingcat")
         if not os.path.exists(app_home):
@@ -166,8 +158,34 @@ class FlingTrainerApp(QWidget):
                 if platform.system() == "Windows":
                     FlingCatTools.addWinDefnderWhite(default_download_path)
 
+    def loadSettings(self) -> NoReturn:
+        """
+        加载配置文件
+        """
+        if os.path.exists(self.config_path):
+            with open(self.config_path, "r") as f:
+                self.settings = json.load(f)
+        else:
+            self.settings = {"download_path": "", "debug_mode": False}
+        self.downloadPath = self.settings.get("download_path", "")
+        self.debugMode = self.settings.get("debug_mode", False)
+
+    def saveSettings(self) -> NoReturn:
+        """
+        保存配置到文件
+        """
+        with open(self.config_path, "w") as f:
+            json.dump(self.settings, f)
+
     def initUI(self):
-        self.setWindowIcon(QIcon("./icon.jpg"))
+        """
+        初始化主界面
+        """
+        if getattr(sys, "frozen", False):
+            applicationPath = sys._MEIPASS
+        elif __file__:
+            applicationPath = os.path.dirname(__file__)
+        app.setWindowIcon(QIcon(os.path.join(applicationPath, "Icon.ico")))
         self.setWindowTitle("FlingCat-风灵月影下载器-Dev by CatMan")
         self.setFixedSize(580, 700)
         layout = QVBoxLayout()
@@ -183,9 +201,11 @@ class FlingTrainerApp(QWidget):
         self.downloadedCheckBox.stateChanged.connect(self.searchData)
         topLayout.addWidget(self.downloadedCheckBox)
 
-        refreshButton = QPushButton("刷新", self)
-        refreshButton.clicked.connect(self.updateDB)
-        topLayout.addWidget(refreshButton)
+        if self.debugMode:
+            refreshButton = QPushButton("刷新", self)
+            refreshButton.clicked.connect(self.updateDB)
+            topLayout.addWidget(refreshButton)
+
         settingsButton = QPushButton("设置", self)
         settingsButton.clicked.connect(self.openSettings)
         topLayout.addWidget(settingsButton)
@@ -205,20 +225,30 @@ class FlingTrainerApp(QWidget):
         self.setLayout(layout)
 
     def setTableWidget(self):
-        self.tableWidget.setColumnCount(3)
-        self.tableWidget.setHorizontalHeaderLabels(["名称", "操作", "操作"])
+        """
+        设置列表区域
+        """
+        self.tableWidget.setColumnCount(4)
+        self.tableWidget.setHorizontalHeaderLabels(["名称", "提示", "管理", "操作"])
         self.tableWidget.horizontalHeader().setVisible(False)
         self.tableWidget.verticalHeader().setVisible(False)
         self.tableWidget.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.tableWidget.setColumnWidth(0, 380)
-        self.tableWidget.setColumnWidth(1, 80)
+        self.tableWidget.setColumnWidth(0, 358)
+        self.tableWidget.setColumnWidth(1, 60)
         self.tableWidget.setColumnWidth(2, 60)
+        self.tableWidget.setColumnWidth(3, 60)
         self.tableWidget.setShowGrid(False)  # 隐藏所有网格线
         self.tableWidget.setStyleSheet(
             "QTableView::item { border-bottom: 1px solid #dcdcdc; }"
         )
 
     def logMessage(self, message):
+        """
+        输出日志
+
+        Args:
+            message ():
+        """
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
         log_entry = f"[{timestamp}] {message}\n"
         self.logTextBox.insertPlainText(log_entry)
@@ -226,6 +256,9 @@ class FlingTrainerApp(QWidget):
         self.logTextBox.ensureCursorVisible()
 
     def initDB(self):
+        """
+        初始化数据库
+        """
         self.engine = create_engine(self.db_path)
         self.Session = sessionmaker(bind=self.engine)
 
@@ -248,6 +281,11 @@ class FlingTrainerApp(QWidget):
         menu.addAction(uninstallAction)
 
         return menu
+
+    def print(self, content):
+        if self.debugMode:
+            self.logMessage(content)
+        print(content)
 
     def confirmUninstall(self, id):
         session = self.Session()
@@ -279,9 +317,24 @@ class FlingTrainerApp(QWidget):
         session.close()
         self.searchData()
 
+    def viewWarn(self, id):
+        session = self.Session()
+        app = session.query(FlingTrainerAppModel).filter_by(id=id).first()
+
+        reply = QMessageBox.question(
+            self,
+            "提示",
+            f"该应用包含以下注意事项，是否打开目录查看！！！\n{app.readme}",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            self.openFileDir(id)
+        session.close()
+
     def parseName(self, name):
         name_zh = re.sub(r"\\n\\t", "", name).strip().rstrip("Trainer").strip()
-        print(f"[{name}]-->[{name_zh}]")
+        # print(f"[{name}]-->[{name_zh}]")
         return name_zh
 
     def getlist(self):
@@ -346,7 +399,7 @@ class FlingTrainerApp(QWidget):
                     game_app[k] = v
         except Exception as err:
             print(err)
-            self.logMessage(f"获取热门游戏出错")
+            self.logMessage(f"获取新增游戏出错")
         return game_app
 
     def updateDB(self):
@@ -370,6 +423,7 @@ class FlingTrainerApp(QWidget):
             if app:
                 app.page_url = page_url
                 app.is_hot = is_hot
+                app.is_new = is_new
             else:
                 # name_en = name_en.strip().strip("Trainer").strip()
                 name_zh = GAME_NAME_MAP.get(name_en, name_en)
@@ -383,18 +437,6 @@ class FlingTrainerApp(QWidget):
                 session.add(app)
             session.commit()
         session.close()
-
-    def loadSettings(self):
-        if os.path.exists(self.config_path):
-            with open(self.config_path, "r") as f:
-                self.settings = json.load(f)
-        else:
-            self.settings = {"download_path": ""}
-        self.downloadPath = self.settings.get("download_path", "")
-
-    def saveSettings(self):
-        with open(self.config_path, "w") as f:
-            json.dump(self.settings, f)
 
     def searchData(self):
         searchText = self.searchBar.text()
@@ -432,65 +474,87 @@ class FlingTrainerApp(QWidget):
             self.tableWidget.setItem(rowIndex, 0, nameItem)
 
             # 清除旧的按钮
-            self.tableWidget.setCellWidget(rowIndex, 1, None)  # 清除管理按钮
-            self.tableWidget.setCellWidget(rowIndex, 2, None)  # 清除打开/下载按钮
+            self.tableWidget.setCellWidget(rowIndex, 1, None)  # 清除按钮
+            self.tableWidget.setCellWidget(rowIndex, 2, None)  # 清除管理按钮
+            self.tableWidget.setCellWidget(rowIndex, 3, None)  # 清除打开/下载按钮
             if rowData.download:
                 # 创建管理按钮
+                if rowData.readme:
+                    warnButton = QPushButton("点我!")
+                    warnButton.clicked.connect(
+                        lambda _, id=rowData.id: self.viewWarn(id)
+                    )  # 设置菜单
+                    self.tableWidget.setCellWidget(rowIndex, 1, warnButton)
                 manageButton = QPushButton("管理")
                 manageButton.setMenu(self.createManageMenu(rowData.id))  # 设置菜单
-                self.tableWidget.setCellWidget(rowIndex, 1, manageButton)
+                self.tableWidget.setCellWidget(rowIndex, 2, manageButton)
                 openButton = QPushButton("打开")
                 openButton.clicked.connect(lambda _, id=rowData.id: self.openFile(id))
-                self.tableWidget.setCellWidget(rowIndex, 2, openButton)
+                self.tableWidget.setCellWidget(rowIndex, 3, openButton)
             else:
                 downloadButton = QPushButton("下载")
                 downloadButton.clicked.connect(
                     lambda _, id=rowData.id: self.downloadFile(id)
                 )
-                self.tableWidget.setCellWidget(rowIndex, 2, downloadButton)
+                self.tableWidget.setCellWidget(rowIndex, 3, downloadButton)
 
     def openFile(self, id):
-        session = self.Session()
-        app = session.query(FlingTrainerAppModel).filter_by(id=id).first()
-        self.logMessage(f"打开文件{app.save_path}")
-        if not os.path.exists(app.save_path):
-            app.download = False
-            session.commit()
-            session.close()
-            self.logMessage("文件已丢失请重新下载!")
-            self.searchData()
-            return
-        isdir = os.path.isdir(app.save_path)
-        # 打开文件逻辑
-        if platform.system() == "Windows":
-            if isdir:
-                subprocess.run(["explorer.exe", folder_path], shell=True)
-            else:
-                subprocess.Popen([app.save_path])
-        elif platform.system() == "Darwin":
-            folder_path = app.save_path if isdir else os.path.dirname(app.save_path)
-            subprocess.run(["open", folder_path])
-        else:
-            print("Unsupported platform")
-        self.logMessage("文件已打开")
-        session.close()
-
-    def openFileDir(self, id):
-        self.logMessage("打开文件夹...")
-        session = self.Session()
-        app = session.query(FlingTrainerAppModel).filter_by(id=id).first()
-        if app.download and app.save_path:
-            folder_path = os.path.dirname(app.save_path)
+        try:
+            session = self.Session()
+            app = session.query(FlingTrainerAppModel).filter_by(id=id).first()
+            self.logMessage(
+                f"打开{app.name_zh if app.name_zh else app.name_en}风灵月影工具"
+            )
+            if not os.path.exists(app.save_path):
+                app.download = False
+                session.commit()
+                session.close()
+                self.logMessage(
+                    f"{app.name_zh if app.name_zh else app.name_en}风灵月影已丢失请重新下载!"
+                )
+                self.searchData()
+                return
+            isdir = os.path.isdir(app.save_path)
             # 打开文件逻辑
             if platform.system() == "Windows":
-                subprocess.run(["explorer.exe", folder_path], shell=True)
+                if isdir:
+                    subprocess.run(["explorer.exe", folder_path], shell=True)
+                else:
+                    subprocess.Popen([app.save_path])
             elif platform.system() == "Darwin":
+                folder_path = app.save_path if isdir else os.path.dirname(app.save_path)
                 subprocess.run(["open", folder_path])
             else:
                 print("Unsupported platform")
-            self.logMessage("文件已打开")
-        else:
-            self.logMessage("应用未下载")
+            self.logMessage(
+                f"{app.name_zh if app.name_zh else app.name_en}风灵月影已打开"
+            )
+            session.close()
+        except Exception as err:
+            self.print(err)
+            self.logMessage(err)
+
+    def openFileDir(self, id):
+        try:
+            self.logMessage("打开文件夹...")
+            session = self.Session()
+            app = session.query(FlingTrainerAppModel).filter_by(id=id).first()
+            if app.download and app.save_path:
+                folder_path = os.path.dirname(app.save_path)
+                print(app.save_path, folder_path)
+                # 打开文件逻辑
+                if platform.system() == "Windows":
+                    subprocess.run(["explorer.exe", folder_path], shell=True)
+                elif platform.system() == "Darwin":
+                    subprocess.run(["open", folder_path])
+                else:
+                    print("Unsupported platform")
+                self.logMessage(f"文件夹{folder_path}已打开")
+            else:
+                self.logMessage("应用未下载")
+        except Exception as err:
+            self.print(err)
+            self.logMessage(err)
 
     def getAppById(self, id):
         session = self.Session()
@@ -509,7 +573,7 @@ class FlingTrainerApp(QWidget):
         root = etree.HTML(html)
         attachment = root.xpath("..//tr[@class='rar' or @class='zip']")[0]
         file_tpye = attachment.xpath("./@class")[0].split(" ")[0]
-        print(file_tpye)
+        self.print(file_tpye)
 
         attachment_title = attachment.xpath("./td[@class='attachment-title']/a")[0]
         title = attachment_title.xpath("./text()")[0]
@@ -588,7 +652,7 @@ class FlingTrainerApp(QWidget):
             if app:
                 # 更新文件逻辑
                 self.logMessage(
-                    f"{app.name_zh if app.name_zh != '' else app.name_en}下载中..."
+                    f"{app.name_zh if app.name_zh != '' else app.name_en}更新中..."
                 )
                 app_info = self.parse_app_info(app.page_url)
                 if app.app_md5 == app_info.get("md5"):
@@ -617,7 +681,7 @@ class FlingTrainerApp(QWidget):
                 self.logMessage("更新完成")
             session.close()
         except Exception as err:
-            print(err)
+            self.print(err)
             self.logMessage("更新出错...")
 
     def downloadFile(self, id):
@@ -656,24 +720,48 @@ class FlingTrainerApp(QWidget):
             self.logMessage(f"{app.name_zh if app.name_zh  else app.name_en}下载完成")
             session.close()
         except Exception as err:
-            print(err)
+            self.print(err)
             self.logMessage("下载出错")
 
     def openSettings(self):
         dialog = SettingsDialog(self)
         if dialog.exec_() == QDialog.Accepted:
             newDownloadPath = dialog.getDownloadPath()
+            debugSwitch = dialog.getDebugSwitch()
+            self.debugMode = debugSwitch
+            self.settings["debug_mode"] = debugSwitch
             FlingCatTools.addWinDefnderWhite(newDownloadPath)
             if newDownloadPath and newDownloadPath != self.downloadPath:
-                if os.path.exists(self.downloadPath):
-                    for filename in os.listdir(self.downloadPath):
-                        shutil.move(
-                            os.path.join(self.downloadPath, filename), newDownloadPath
+
+                session = self.Session()
+                apps = (
+                    session.query(FlingTrainerAppModel)
+                    .filter(FlingTrainerAppModel.download == True)
+                    .all()
+                )
+                for app in apps:
+                    if os.path.exists(app.save_path):
+                        res = shutil.move(
+                            os.path.dirname(app.save_path),
+                            newDownloadPath,
                         )
-                    self.logMessage("文件已移动")
+                        print("res", res)
+                        app.save_path = os.path.join(
+                            res, os.path.basename(app.save_path)
+                        )
+                        print("save_path", app.save_path)
+                        session.commit()
+                    else:
+                        app.download = False
+                        app.app_md5 = ""
+                        app.readme = ""
+                        app.save_path = ""
+                    session.commit()
+                session.close()
+                self.logMessage("文件已移动")
                 self.downloadPath = newDownloadPath
                 self.settings["download_path"] = self.downloadPath
-                self.saveSettings()
+            self.saveSettings()
 
 
 if __name__ == "__main__":
