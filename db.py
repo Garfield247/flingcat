@@ -17,3 +17,5 @@ class FlingTrainerAppModel(Base):
     readme = Column(String)
     app_md5 = Column(String)
     update_date = Column(String)
+
+

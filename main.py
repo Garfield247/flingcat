@@ -16,26 +16,11 @@ import requests
 from lxml import etree
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QIcon, QTextCursor
-from PyQt5.QtWidgets import (
-    QAction,
-    QApplication,
-    QCheckBox,
-    QDialog,
-    QDialogButtonBox,
-    QFileDialog,
-    QGridLayout,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QMenu,
-    QMessageBox,
-    QPushButton,
-    QTableWidget,
-    QTableWidgetItem,
-    QTextEdit,
-    QVBoxLayout,
-    QWidget,
-)
+from PyQt5.QtWidgets import (QAction, QApplication, QCheckBox, QDialog,
+                             QDialogButtonBox, QFileDialog, QGridLayout,
+                             QHBoxLayout, QLabel, QLineEdit, QMenu,
+                             QMessageBox, QPushButton, QTableWidget,
+                             QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget)
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -302,13 +287,20 @@ class FlingTrainerApp(QWidget):
             self.uninstallFile(id)
         session.close()
 
+    def rmtree(self, path: str):
+        self.print(f"移除目录{path}")
+        try:
+            shutil.rmtree(path, ignore_errors=True)
+        except Exception as err:
+            self.print(f"移除文件[{path}]出错:{err}")
+
     def uninstallFile(self, id):
         session = self.Session()
         app = session.query(FlingTrainerAppModel).filter_by(id=id).first()
         if app:
             if os.path.exists(app.save_path):
                 # 删除文件夹
-                shutil.rmtree(os.path.dirname(app.save_path), ignore_errors=True)
+                self.rmtree(os.path.dirname(app.save_path), ignore_errors=True)
             app.download = False
             app.save_path = ""
             app.app_md5 = ""
@@ -334,7 +326,6 @@ class FlingTrainerApp(QWidget):
 
     def parseName(self, name):
         name_zh = re.sub(r"\\n\\t", "", name).strip().rstrip("Trainer").strip()
-        # print(f"[{name}]-->[{name_zh}]")
         return name_zh
 
     def getlist(self):
@@ -507,12 +498,13 @@ class FlingTrainerApp(QWidget):
             )
             if not os.path.exists(app.save_path):
                 app.download = False
+                app.save_path = ""
+                app.readme = ""
+                app.app_md5 = ""
                 session.commit()
-                session.close()
                 self.logMessage(
                     f"{app.name_zh if app.name_zh else app.name_en}风灵月影已丢失请重新下载!"
                 )
-                self.searchData()
                 return
             isdir = os.path.isdir(app.save_path)
             # 打开文件逻辑
@@ -533,6 +525,8 @@ class FlingTrainerApp(QWidget):
         except Exception as err:
             self.print(err)
             self.logMessage(err)
+        finally:
+            session.close()
 
     def openFileDir(self, id):
         try:
@@ -555,6 +549,8 @@ class FlingTrainerApp(QWidget):
         except Exception as err:
             self.print(err)
             self.logMessage(err)
+        finally:
+            session.close()
 
     def getAppById(self, id):
         session = self.Session()
@@ -562,33 +558,36 @@ class FlingTrainerApp(QWidget):
         session.close()
         return app
 
-    def parse_app_info(self, page_url):
+    def parse_app_info(self, page_url)->dict:
         payload = {}
         headers = {
             "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
             "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
         }
         response = requests.request("GET", page_url, headers=headers, data=payload)
-        html = response.text
-        root = etree.HTML(html)
-        attachment = root.xpath("..//tr[@class='rar' or @class='zip']")[0]
-        file_tpye = attachment.xpath("./@class")[0].split(" ")[0]
-        self.print(file_tpye)
+        if response.status_code == 200:
+            html = response.text
+            root = etree.HTML(html)
+            attachment = root.xpath("..//tr[@class='rar' or @class='zip']")[0]
+            file_tpye = attachment.xpath("./@class")[0].split(" ")[0]
+            self.print(file_tpye)
 
-        attachment_title = attachment.xpath("./td[@class='attachment-title']/a")[0]
-        title = attachment_title.xpath("./text()")[0]
-        url = attachment_title.xpath("./@href")[0]
-        date = attachment.xpath("./td[@class='attachment-date']/text()")[0]
-        md5 = hashlib.md5(title.encode(encoding="UTF-8")).hexdigest()
-        app_info = {
-            "title": title,
-            "md5": md5,
-            "url": url,
-            "date": date,
-            "file_type": file_tpye,
-        }
-        print(f"app_info:{app_info}")
-        return app_info
+            attachment_title = attachment.xpath("./td[@class='attachment-title']/a")[0]
+            title = attachment_title.xpath("./text()")[0]
+            url = attachment_title.xpath("./@href")[0]
+            date = attachment.xpath("./td[@class='attachment-date']/text()")[0]
+            md5 = hashlib.md5(title.encode(encoding="UTF-8")).hexdigest()
+            app_info = {
+                "title": title,
+                "md5": md5,
+                "url": url,
+                "date": date,
+                "file_type": file_tpye,
+            }
+            print(f"app_info:{app_info}")
+            return app_info
+        else:
+            return {}
 
     def save_file(self, app_info, save_dir):
         title = app_info.get("title")
@@ -598,7 +597,7 @@ class FlingTrainerApp(QWidget):
         temp_path = os.path.join(save_dir, "temp", md5, f"{int(time.time())}/")
         if not os.path.exists(temp_path):
             os.makedirs(temp_path)
-            os.chmod(temp_path, 0o777)
+            # os.chmod(temp_path, 0o777)
         temp_file_path = os.path.join(temp_path, f"{title}.{file_type}")
         local_file, header = urlretrieve(url, filename=temp_file_path)
         save_path = os.path.join(save_dir, md5)
@@ -607,7 +606,7 @@ class FlingTrainerApp(QWidget):
         elif file_type == "rar":
             if not os.path.exists(save_path):
                 os.makedirs(save_path)
-                os.chmod(save_path, 0o777)
+                # os.chmod(save_path, 0o777)
             if hasattr(sys, "_MEIPASS"):
                 current_dir = sys._MEIPASS
             else:
@@ -621,9 +620,9 @@ class FlingTrainerApp(QWidget):
                 # 调用 unrar 命令
                 subprocess.run(command, check=True)
             except subprocess.CalledProcessError as e:
-                print(f"解压失败: {e}")
+                self.print(f"rar 解压失败: {e}")
         os.chmod(temp_path, stat.S_IWRITE)
-        shutil.rmtree(temp_path, ignore_errors=True)
+        self.rmtree(temp_path)
         # print(os.stat(temp_path))
         files = os.listdir(save_path)
         trainer = save_path
@@ -663,7 +662,7 @@ class FlingTrainerApp(QWidget):
                 trainer, readme = self.save_file(app_info, self.downloadPath)
                 if app.save_path != trainer:
                     os.chmod(app.save_path, stat.S_IWRITE)
-                    shutil.rmtree(app.save_path, ignore_errors=True)
+                    self.rmtree(app.save_path)
                     print(os.stat(app.save_path))
                 app.save_path = trainer
                 app.update_date = app_info.get("date", "")
@@ -705,23 +704,31 @@ class FlingTrainerApp(QWidget):
                     f"{app.name_zh if app.name_zh  else app.name_en}下载中..."
                 )
                 app_info = self.parse_app_info(app.page_url)
-                trainer, readme = self.save_file(app_info, self.downloadPath)
-                app.save_path = trainer
-                app.update_date = app_info.get("date", "")
-                app.app_md5 = app_info.get("md5", "")
-                if readme:
-                    with open(readme, "rb") as f:
-                        raw_data = f.read()
-                        encoding = chardet.detect(raw_data)["encoding"]
-                    with open(readme, "r", encoding=encoding, errors="ignore") as fp:
-                        app.readme = fp.read()
-                app.download = True
-                session.commit()
-            self.logMessage(f"{app.name_zh if app.name_zh  else app.name_en}下载完成")
-            session.close()
+                if app_info:
+                    trainer, readme = self.save_file(app_info, self.downloadPath)
+                    if trainer:
+                        app.save_path = trainer
+                        app.update_date = app_info.get("date", "")
+                        app.app_md5 = app_info.get("md5", "")
+                        if readme:
+                            with open(readme, "rb") as f:
+                                raw_data = f.read()
+                                encoding = chardet.detect(raw_data)["encoding"]
+                            with open(
+                                readme, "r", encoding=encoding, errors="ignore"
+                            ) as fp:
+                                app.readme = fp.read()
+                        app.download = True
+                        session.commit()
+                        self.logMessage(
+                            f"{app.name_zh if app.name_zh  else app.name_en}下载完成"
+                        )
         except Exception as err:
             self.print(err)
             self.logMessage("下载出错")
+        finally:
+            session.close()
+
 
     def openSettings(self):
         dialog = SettingsDialog(self)
